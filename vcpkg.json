@@ -1,0 +1,5 @@
+{
+  "name": "jpeg-meta",
+  "version-string": "0.1.0",
+  "dependencies": [ "exiv2" ]
+}
