@@ -4,59 +4,107 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    env:
+      BUILD_DIR: build
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build build-essential clang git curl zip
 
-      - name: Setup vcpkg (manifest)
-        uses: lukka/run-vcpkg@v11
+      # Cache’ujemy archiwa paczek vcpkg (znacz¹co przyspiesza kolejne runy)
+      - name: Cache vcpkg archives
+        uses: actions/cache@v4
         with:
-         vcpkgJsonGlob: vcpkg.json
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
 
-      - name: Configure (Ninja)
+      - name: Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> $GITHUB_ENV
+
+      - name: Configure (CMake + ${{ matrix.cc }})
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cc == 'gcc' && 'g++' || 'clang++' }}
         run: >
-         cmake -S . -B build -G Ninja
-         -DCMAKE_BUILD_TYPE=Release
-         -DBUILD_TESTING=ON
-         -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake -S . -B $BUILD_DIR -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build $BUILD_DIR --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir $BUILD_DIR --output-on-failure
 
       - name: Package
-        run: cmake --build build --target package
+        run: cmake --build $BUILD_DIR --target package
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: jpegmeta-linux
-          path: build/*.tar.gz
+          name: jpegmeta-linux-${{ matrix.cc }}
+          path: ${{ env.BUILD_DIR }}/*.tar.gz
 
   windows:
     runs-on: windows-latest
+    env:
+      BUILD_DIR: build
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup vcpkg
-        uses: microsoft/setup-vcpkg@v1
+      # Cache archiwów vcpkg dla Windows
+      - name: Cache vcpkg archives
+        uses: actions/cache@v4
         with:
-          vcpkg-json: vcpkg.json
+          path: C:\Users\runneradmin\AppData\Local\vcpkg\archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg $env:RUNNER_TEMP\vcpkg
+          & $env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          echo "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure (VS2022 x64)
         run: >
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          cmake -S . -B $env:BUILD_DIR -G "Visual Studio 17 2022" -A x64
           -DBUILD_TESTING=ON
           -DCMAKE_TOOLCHAIN_FILE="${env:VCPKG_ROOT}\scripts\buildsystems\vcpkg.cmake"
+
       - name: Build (Release)
-        run: cmake --build build --config Release --parallel
+        run: cmake --build $env:BUILD_DIR --config Release --parallel
 
       - name: Test
-        run: ctest -C Release --test-dir build --output-on-failure
+        run: ctest -C Release --test-dir $env:BUILD_DIR --output-on-failure
+
+      - name: Package
+        run: cmake --build $env:BUILD_DIR --config Release --target package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jpegmeta-windows
+          path: ${{ env.BUILD_DIR }}\*.zip
