@@ -13,20 +13,17 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
-      # POPRAWKA: oficjalna akcja vcpkg
-      - name: Setup vcpkg
-        uses: microsoft/setup-vcpkg@v1
+      - name: Setup vcpkg (manifest)
+        uses: lukka/run-vcpkg@v11
         with:
-          vcpkg-json: vcpkg.json   # w³¹czy manifest mode i cache paczek
-          # (opcj.) pin do konkretnego commita vcpkg dla stabilnoœci:
-          # vcpkgGitCommitId: 3cd0b6c0c2f0d0b0b8df2a9a2b4f3a3d6c7e8f90
+         vcpkgJsonGlob: vcpkg.json
 
       - name: Configure (Ninja)
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TESTING=ON
-          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+         cmake -S . -B build -G Ninja
+         -DCMAKE_BUILD_TYPE=Release
+         -DBUILD_TESTING=ON
+         -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build
         run: cmake --build build --parallel
@@ -52,10 +49,14 @@ jobs:
         uses: microsoft/setup-vcpkg@v1
         with:
           vcpkg-json: vcpkg.json
-          # vcpkgGitCommitId: 3cd0b6c0c2f0d0b0b8df2a9a2b4f3a3d6c7e8f90
 
       - name: Configure (VS2022 x64)
         run: >
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64
           -DBUILD_TESTING=ON
-          -DCMAKE_TOOLCHAIN_FILE="${env:VCPKG_ROOT}\scripts\buildsystems\_
+          -DCMAKE_TOOLCHAIN_FILE="${env:VCPKG_ROOT}\scripts\buildsystems\vcpkg.cmake"
+      - name: Build (Release)
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest -C Release --test-dir build --output-on-failure
